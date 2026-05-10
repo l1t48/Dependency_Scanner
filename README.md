@@ -17,7 +17,7 @@ It does **not** have:
 - Email reporting
 - GitHub Actions automation
 
-Those are Phases 2–5. This is Phase 1.
+Those are Phases 3–5. Phases 1 and 2 are done.
 
 ---
 
@@ -26,11 +26,14 @@ Those are Phases 2–5. This is Phase 1.
 ```
 dep-scanner/
 ├── config/
-│   └── scanner.config.js   # WHAT to scan and HOW to crawl
+│   └── scanner.config.js       # WHAT to scan and HOW to crawl
 ├── core/
 │   ├── crawler/
-│   │   └── index.js        # Phase 1: finds every package-lock.json
-│   └── index.js            # Engine entry point — orchestrates all phases
+│   │   └── index.js            # Phase 1: finds every package-lock.json
+│   ├── extractor/
+│   │   ├── index.js            # Phase 2: DFS parser + inverted index
+│   │   └── test.js             # Phase 2: 34-assertion test suite
+│   └── index.js                # Engine entry point — orchestrates all phases
 ├── package.json
 └── README.md
 ```
@@ -40,8 +43,8 @@ As each phase is completed, `core/` will grow:
 ```
 core/
 ├── crawler/      ← Phase 1  (done)
-├── extractor/    ← Phase 2  (next)
-├── scanner/      ← Phase 3
+├── extractor/    ← Phase 2  (done)
+├── scanner/      ← Phase 3  (next)
 ├── cache/        ← Phase 3
 ├── reporter/     ← Phase 4
 └── index.js      ← orchestrator
@@ -60,15 +63,17 @@ CLI (manual / GitHub Actions)  →  node core/index.js
 Server route (dashboard)       →  import { runScan } from "./core/index.js"
 ```
 
-Both call `runScan()` from `core/index.js`. The crawler does not know which caller triggered it.
+Both call `runScan()` from `core/index.js`. Neither the crawler nor the extractor knows which caller triggered them.
 
 ```js
 // core/index.js
 import { scanProjects } from "./crawler/index.js";
+import { buildInventory } from "./extractor/index.js";
 
 export async function runScan() {
-  await scanProjects(); // Phase 1
-  // Phase 2, 3, 4 will be chained here as they are built
+  const lockfiles = await scanProjects(); // Phase 1
+  const inventory = buildInventory(lockfiles); // Phase 2
+  // Phase 3, 4 will be chained here as they are built
 }
 
 runScan().catch((err) => {
@@ -161,8 +166,6 @@ The rule: write the algorithm when the problem is unique to your domain. Use the
 All values that describe _your environment_ live here. The crawler imports them — it doesn't define them.
 
 ```js
-// config/scanner.config.js
-
 export const SEARCH_PATH = "E:/Projects";
 
 export const IGNORE_LIST = [
@@ -184,7 +187,6 @@ export const CRAWLER_OPTIONS = {
 ### The crawler — `core/crawler/index.js`
 
 ```js
-// core/crawler/index.js
 import fg from "fast-glob";
 import path from "path";
 import {
@@ -204,15 +206,215 @@ export async function scanProjects() {
   });
 
   console.log(`\n✅ Found ${entries.length} projects:`);
-  entries.forEach((file) => {
-    console.log(`- ${path.dirname(file)}`);
-  });
+  entries.forEach((file) => console.log(`- ${path.dirname(file)}`));
 
-  return entries; // array of absolute lockfile paths — passed to Phase 2
+  // Returns { project, lockfilePath } objects — Phase 2 needs the project name
+  // to build the inverted index. A bare file path does not contain it.
+  return entries.map((file) => ({
+    project: path.basename(path.dirname(file)),
+    lockfilePath: file,
+  }));
 }
 ```
 
-The crawler returns an array of absolute paths. Phase 2 (the extractor) will receive that array and read each file. The crawler itself never reads the lockfile contents — its only job is to find them.
+The crawler returns `{ project, lockfilePath }` objects. Phase 2 needs the project name to build the inverted index — a bare file path alone is not enough. The crawler itself never reads the lockfile contents — its only job is to find and label them.
+
+---
+
+## Phase 2 — The Extraction Engine
+
+**Goal:** Open every lockfile the crawler found, traverse the full dependency tree, and produce a clean global inventory — one deduplicated list of every package installed across all projects, and a map showing which projects use each one.
+
+---
+
+### Why DFS and not a flat loop?
+
+When you install `express`, npm installs express and everything express depends on. Those dependencies have their own dependencies. The full picture is a tree, not a list.
+
+```
+express@4.19.2
+├── body-parser@1.20.2
+│   └── bytes@3.1.2
+│       └── ms@2.1.3        ← you never installed this
+└── debug@4.3.4
+    └── ms@2.1.3             ← same package, different branch
+```
+
+A flat loop reads only the top level — it finds `express` and stops. It never sees `bytes` or `ms`. A flat loop would produce an inventory of ~20–30 packages per project. With DFS traversing the full tree, the real number is 200–600+ per project.
+
+**Why that matters:** The OSV vulnerability database does not care that you didn't install `ms` directly. If `ms@2.1.3` has a known vulnerability, your application is affected regardless. A flat loop would miss it entirely and your report would be silently incomplete.
+
+**DFS — "go deep first"**
+
+DFS visits a node, then immediately recurses into its children before moving to the next sibling. In a dependency tree that means: visit `express`, recurse into `body-parser`, recurse into `bytes`, recurse into `ms`, backtrack, recurse into `debug`, recurse into `ms` again (deduplicated), backtrack, done.
+
+```js
+// v1: nested tree — the actual DFS implementation
+function parseV1(dependencies, found = []) {
+  for (const [name, meta] of Object.entries(dependencies)) {
+    if (!meta.version) continue;
+
+    found.push({ name, version: meta.version, dev: meta.dev ?? false });
+
+    // This single line is the DFS — recurse before moving to the next sibling
+    if (meta.dependencies) {
+      parseV1(meta.dependencies, found);
+    }
+  }
+  return found;
+}
+```
+
+Without `if (meta.dependencies) { parseV1(meta.dependencies, found); }` the function only ever sees the top level. That one recursive call is what makes it a depth-first search.
+
+**Why v3 lockfiles don't need DFS**
+
+npm v7+ writes a flat `packages` map — every dependency is already listed at the top level regardless of nesting. The tree structure is gone. Iterating the keys is equivalent to DFS because npm already did the traversal when it wrote the lockfile.
+
+```js
+// v2/v3: flat map — no recursion needed
+function parseV3(packages) {
+  const deps = [];
+  for (const [pkgPath, meta] of Object.entries(packages)) {
+    if (!pkgPath || !meta.version) continue;
+    const segments = pkgPath.split("node_modules/");
+    const name = segments[segments.length - 1];
+    deps.push({ name, version: meta.version, dev: meta.dev ?? false });
+  }
+  return deps;
+}
+```
+
+The parser detects which format it's dealing with automatically:
+
+```js
+function parseLockfile(lockfile) {
+  if (lockfile.packages) return parseV3(lockfile.packages); // npm v2/v3
+  if (lockfile.dependencies) return parseV1(lockfile.dependencies); // npm v1
+  return [];
+}
+```
+
+---
+
+### The Inverted Index
+
+After parsing every lockfile, the extractor builds two data structures.
+
+**The problem it solves:** Ten projects all use `lodash@4.17.21`. Without deduplication you ask OSV "is lodash safe?" ten times — once per project. The OSV API has rate limits and a maximum batch size of 1,000. Redundant queries waste both.
+
+**The solution:** Build a single map where the key is `package@version` and the value is the set of projects that use it. Every unique package is queried exactly once regardless of how many projects share it.
+
+```js
+// During extraction — one Map accumulates across all lockfiles
+const invertedMap = new Map();
+// key:   "lodash@4.17.21"
+// value: { projects: Set { "job-tracker", "miqat", "portfolio" }, dev: false }
+
+// After all lockfiles — serialised to plain objects for Phase 3
+{
+  "lodash@4.17.21": ["job-tracker", "miqat", "portfolio"],
+  "express@4.19.2": ["job-tracker"],
+  "jest@29.7.0":    ["job-tracker", "portfolio"]
+}
+```
+
+A `Set` is used for the project list during accumulation because the same project name can appear multiple times as different lockfiles are processed. `Set` deduplication is automatic. It is converted to an array before being returned.
+
+**How Phase 3 uses it:** Phase 3 takes `uniqueDeps` and queries OSV once per entry. When OSV returns a vulnerability for `lodash@4.17.21`, Phase 3 looks up `invertedIndex["lodash@4.17.21"]` to find every project that is affected. Without the inverted index, Phase 3 would have to re-scan all lockfiles from scratch to answer that question.
+
+---
+
+### Dev vs prod flagging
+
+The lockfile records whether each dependency is a development tool or a production dependency via a `dev` boolean. The extractor reads it and stores it on every entry:
+
+```js
+{ name: "jest",    version: "29.7.0",  dev: true  }  // testing tool
+{ name: "express", version: "4.19.2",  dev: false }  // runs in production
+```
+
+Phase 3 uses this to decide priority. A critical vulnerability in `jest` is less urgent than the same vulnerability in `express` — `jest` never runs in production. The flag is captured here so Phase 3 can filter or deprioritise without re-reading the lockfiles.
+
+---
+
+### The extractor — `core/extractor/index.js`
+
+```js
+import { readFileSync } from "fs";
+
+export function buildInventory(lockfiles) {
+  const invertedMap = new Map();
+
+  for (const { project, lockfilePath } of lockfiles) {
+    let lockfile;
+    try {
+      lockfile = JSON.parse(readFileSync(lockfilePath, "utf-8"));
+    } catch {
+      console.warn(`⚠️  Could not read ${lockfilePath} — skipping`);
+      continue;
+    }
+
+    const deps = parseLockfile(lockfile);
+
+    for (const dep of deps) {
+      const key = `${dep.name}@${dep.version}`;
+      if (!invertedMap.has(key)) {
+        invertedMap.set(key, { projects: new Set(), dev: dep.dev });
+      }
+      invertedMap.get(key).projects.add(project);
+    }
+  }
+
+  // Serialise Map → plain objects for Phase 3
+  const uniqueDeps = [];
+  const invertedIndex = {};
+
+  for (const [key, value] of invertedMap.entries()) {
+    const atIdx = key.lastIndexOf("@");
+    uniqueDeps.push({
+      name: key.slice(0, atIdx),
+      version: key.slice(atIdx + 1),
+      dev: value.dev,
+    });
+    invertedIndex[key] = [...value.projects];
+  }
+
+  return { uniqueDeps, invertedIndex };
+}
+```
+
+---
+
+### Testing Phase 2
+
+Phase 2 has a dedicated test suite that uses a hand-written mock lockfile. The mock is controlled entirely — every package, every nesting level, every branch is defined by us. This makes the assertions exact rather than approximate.
+
+```bash
+npm run extract:test
+```
+
+**What the test suite covers (34 assertions):**
+
+| Group            | What it proves                                                   |
+| ---------------- | ---------------------------------------------------------------- |
+| Total count      | 20 unique packages, not 20 × number of branches                  |
+| Direct prod deps | express, mongoose, axios, dotenv found and labelled correctly    |
+| DFS depth        | `ms` found at 4 levels deep — express → body-parser → bytes → ms |
+| Deduplication    | `ms@2.1.3` appears in two branches, stored once                  |
+| Dev flag         | All dev and prod packages correctly labelled                     |
+| Scoped packages  | `@babel/core` and `@babel/parser` parsed without breaking        |
+| Inverted index   | Keys, values, and project names in the correct shape             |
+
+**The test that matters most — deduplication across branches:**
+
+```
+express@4.19.2
+├── body-parser → bytes → ms@2.1.3   ← DFS visits ms here
+└── debug       →        ms@2.1.3   ← DFS visits ms again here
+```
+
+DFS visits `ms@2.1.3` twice. The assertion confirms it appears exactly once in `uniqueDeps`. If this fails, the `Set` deduplication is broken and Phase 3 would send duplicate queries to OSV.
 
 ---
 
@@ -222,22 +424,34 @@ The crawler returns an array of absolute paths. Phase 2 (the extractor) will rec
 
 ```bash
 npm run core
-# → nodemon core/index.js
+# → nodemon core/index.js (restarts on file save)
 ```
 
-`nodemon` restarts on every file save. Use this while actively building.
+### Run the extractor tests
 
-### What a successful Phase 1 output looks like
+```bash
+npm run extract:test
+# → 34 assertions, all phases of extractor logic covered
+```
+
+### What a successful Phase 1 + 2 output looks like
 
 ```
 🚀 Scanning for MERN projects...
 
-✅ Found 4 projects:
-- E:/Projects/job-tracker/backend
-- E:/Projects/job-tracker/frontend
-- E:/Projects/miqat
-- E:/Projects/portfolio
+✅ Found 14 projects:
+- E:/Projects/JobSeeker/jobSeeker_backend
+- E:/Projects/JobSeeker/jobSeeker_frontend
+- E:/Projects/Miqat
+...
+
+✅ DFS working — found transitive dep: bytes@3.1.2
+   Used by: Ink_And_Insights_frontend, jobSeeker_backend
+
+Total unique deps: 2021
 ```
+
+2021 unique dependencies across 14 projects. Direct installs in `package.json` total around 20–30 per project. The remaining ~1900+ are transitive dependencies found by DFS.
 
 ### What to check if it finds 0 projects
 
@@ -246,16 +460,15 @@ npm run core
 3. Increase `deep` temporarily to `10` to rule out a depth issue.
 4. Make sure the target folder is not in `IGNORE_LIST`.
 
-### What to check if it finds too many
+### What to check if the dependency count seems too low
 
-1. A path in `IGNORE_LIST` is probably missing. Add the offending folder name.
-2. Reduce `deep` — if your structure is flat, `deep: 2` may be enough.
+1. Run `npm run extract:test` — if all 34 pass, the extractor is correct and the count is accurate.
+2. Check that your projects have run `npm install` recently — stale or missing lockfiles produce low counts.
+3. The count will be lower for frontend-only projects vs full MERN stacks.
 
 ---
 
 ## What `runScan()` will look like when all phases are done
-
-This is the full pipeline. Each line below represents one completed phase:
 
 ```js
 export async function runScan() {
@@ -272,12 +485,16 @@ export async function runScan() {
 
 ## Engineering decisions
 
-| Decision                    | Alternative                 | Why this approach                                              |
-| --------------------------- | --------------------------- | -------------------------------------------------------------- |
-| Scan `package-lock.json`    | Scan `package.json`         | Accuracy — lockfile has exact installed versions               |
-| Central `scanner.config.js` | Inline constants in crawler | Separation of config from logic                                |
-| `fast-glob` over custom DFS | Hand-rolled recursive scan  | Performance + ignore patterns + depth control, solved problem  |
-| Crawler returns paths only  | Crawler reads file contents | Single responsibility — finding vs. parsing are different jobs |
+| Decision                          | Alternative                    | Why this approach                                                                 |
+| --------------------------------- | ------------------------------ | --------------------------------------------------------------------------------- |
+| Scan `package-lock.json`          | Scan `package.json`            | Accuracy — lockfile has exact installed versions                                  |
+| Central `scanner.config.js`       | Inline constants in crawler    | Separation of config from logic                                                   |
+| `fast-glob` over custom algorithm | Hand-rolled recursive scan     | Performance + ignore patterns + depth control, solved problem                     |
+| Crawler returns paths only        | Crawler reads file contents    | Single responsibility — finding vs. parsing are different jobs                    |
+| DFS for v1 lockfiles              | Flat top-level loop            | Completeness — transitive deps at any depth are found and reported                |
+| Inverted index (Hash Map)         | Scan each project individually | Speed — each unique package queried once regardless of how many projects share it |
+| `Set` for project accumulation    | Array with manual dedup check  | Correctness — duplicate project names are impossible by definition                |
+| Dev flag stored at extraction     | Filter at query time           | Separation — extractor labels data, scanner decides what to do with labels        |
 
 ---
 

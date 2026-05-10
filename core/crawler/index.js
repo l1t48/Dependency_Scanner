@@ -1,6 +1,10 @@
 import fg from "fast-glob";
 import path from "path";
-import { SEARCH_PATH, IGNORE_LIST, CRAWLER_OPTIONS } from "../../config/scanner.config.js";
+import {
+  SEARCH_PATH,
+  IGNORE_LIST,
+  CRAWLER_OPTIONS,
+} from "../../config/scanner.config.js";
 
 export async function scanProjects() {
   console.log("🚀 Scanning for MERN projects...");
@@ -17,5 +21,8 @@ export async function scanProjects() {
     console.log(`- ${path.dirname(file)}`);
   });
 
-  return entries;
+  return entries.map((file) => ({
+    project: path.basename(path.dirname(file)),
+    lockfilePath: file,
+  }));
 }
