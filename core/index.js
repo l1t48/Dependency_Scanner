@@ -1,34 +1,52 @@
 import { scanProjects } from "./crawler/index.js";
 import { buildInventory } from "./extractor/index.js";
+import { queryOSV } from "./scanner/index.js";
+import { printReport } from "./reporter/print.js";
+
+/**
+ * runScan()
+ *
+ * Runs the full three-phase pipeline and returns the vulnerability report.
+ *
+ * Phase 1 — Crawler
+ *   Finds every package-lock.json under SEARCH_PATH.
+ *   Returns: [{ project, lockfilePath }]
+ *
+ * Phase 2 — Extractor
+ *   Parses each lockfile via DFS, builds the global inventory.
+ *   Returns: { uniqueDeps, invertedIndex }
+ *
+ * Phase 3 — Scanner
+ *   Checks uniqueDeps against OSV, uses cache to skip known results.
+ *   Returns: VulnResult[] sorted by severity
+ *
+ * Phase 4 — Reporter (not yet implemented)
+ *   Will receive the VulnResult[] and produce the HTML email.
+ *
+ */
 
 export async function runScan() {
-  const lockfiles = await scanProjects(); // Phase 1
-  const inventory = buildInventory(lockfiles); // Phase 2
+  console.log("═══════════════════════════════════════");
+  console.log("  dep-scanner  —  starting scan");
+  console.log("═══════════════════════════════════════");
 
-  // Pick any package you DIDN'T directly install
-  const testPackage = "bytes"; // or "ms", "depd", "safe-buffer"
-  const found = inventory.uniqueDeps.find((d) => d.name === testPackage);
+  const lockfiles = await scanProjects(); // Phase 1 — crawler
+  const inventory = buildInventory(lockfiles); // Phase 2 — extractor
+  const report = await queryOSV(inventory); // Phase 3 — scanner
+  // await sendReport(report);                  // Phase 4 — coming next
 
-  if (found) {
-    console.log(
-      `✅ DFS working — found transitive dep: ${found.name}@${found.version}`,
-    );
-    console.log(
-      `   Used by: ${inventory.invertedIndex[`${found.name}@${found.version}`]}`,
-    );
-  } else {
-    console.log(
-      `❌ DFS not reaching transitive deps — ${testPackage} not found`,
-    );
-  }
-
-  // Also print total count — should be in the hundreds, not tens
-  console.log(`\nTotal unique deps: ${inventory.uniqueDeps.length}`);
-  console.log(`Direct installs in package.json are maybe 20–30.`);
-  console.log(`With DFS finding transitive deps, expect 200–600+`);
+  printReport(report);
+  return report;
 }
 
-runScan().catch((err) => {
-  console.error("Failed to run scan:", err);
-  process.exit(1);
-});
+// ─── CLI entry ────────────────────────────────────────────────────────────────
+// The "scan" argument guard prevents runScan() firing on import by the server.
+
+if (process.argv[2] === "scan") {
+  runScan()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error("[core] Fatal error:", err.message);
+      process.exit(1);
+    });
+}

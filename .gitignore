@@ -1,31 +1,14 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# Dependencies
+node_modules/
 
-node_modules
-dist
-dist-ssr
-*.local
+# Environment — never commit secrets
 .env
-tests-results/
-test-results/
-playwright-report/
-blob-report/
-playwright/.cache
-logs
+.env.*
+!.env.example
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Cache — generated on every scan, machine-specific, can contain vuln details
+core/cache/cache.json
+
+# Build output
+dist/
+build/
