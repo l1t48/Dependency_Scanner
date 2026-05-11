@@ -7,14 +7,16 @@ export async function detectVulnerabilities(toScan) {
   const cacheKeys = toScan.map((d) => `osv_${d.name}@${d.version}`);
   const { hits, misses: missKeys } = readCacheBatch(cacheKeys);
 
+  // 1. Create the lookup map once (O(N))
+  const scanMap = new Map(toScan.map((d) => [`${d.name}@${d.version}`, d]));
   const pending = [];
 
-  // ── Resolve from cache — no API call ─────────────────────────────────────────
+  // ── Resolve from cache (O(1) lookups) ─────────────────────────────────────────
   for (const [key, advisories] of Object.entries(hits)) {
-    if (!advisories.length) continue;
-    const dep = toScan.find((d) => `${d.name}@${d.version}` === key.slice(4));
-    if (!dep) continue;
-    for (const adv of advisories) pending.push({ dep, advisoryId: adv.id });
+    const dep = scanMap.get(key.slice(4));
+    if (dep) {
+      for (const adv of advisories) pending.push({ dep, advisoryId: adv.id });
+    }
   }
 
   const hitCount = Object.keys(hits).length;
@@ -22,12 +24,11 @@ export async function detectVulnerabilities(toScan) {
     console.log(`[cache] ${hitCount} detection result(s) loaded — no API call`);
   }
 
-  // ── Query OSV for misses — API call ──────────────────────────────────────────
+  // ── Query OSV for misses (O(1) lookups) ───────────────────────────────────────
   if (missKeys.length > 0) {
+    // FIX: Use scanMap.get() instead of .find()
     const missedDeps = missKeys
-      .map((key) =>
-        toScan.find((d) => `${d.name}@${d.version}` === key.slice(4)),
-      )
+      .map((key) => scanMap.get(key.slice(4)))
       .filter(Boolean);
 
     const chunks = chunkArray(missedDeps, CHUNK_SIZE);
@@ -40,10 +41,7 @@ export async function detectVulnerabilities(toScan) {
       );
 
       const results = await fetchOSVBatch(chunk);
-      if (!results) {
-        console.warn(`[api]   Batch ${i + 1} failed — skipping`);
-        continue;
-      }
+      if (!results) continue;
 
       for (let j = 0; j < chunk.length; j++) {
         const dep = chunk[j];
