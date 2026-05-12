@@ -2,6 +2,7 @@ import { scanProjects } from "./crawler/index.js";
 import { buildInventory } from "./extractor/index.js";
 import { queryOSV } from "./scanner/index.js";
 import { printReport } from "./reporter/print.js";
+import { performance } from "perf_hooks";
 
 /**
  * runScan()
@@ -29,6 +30,7 @@ export async function runScan() {
   console.log("═══════════════════════════════════════");
   console.log("  dep-scanner  —  starting scan");
   console.log("═══════════════════════════════════════");
+  const startTime = performance.now();
 
   const lockfiles = await scanProjects(); // Phase 1 — crawler
   const inventory = buildInventory(lockfiles); // Phase 2 — extractor
@@ -36,6 +38,10 @@ export async function runScan() {
   // await sendReport(report);                  // Phase 4 — coming next
 
   printReport(report);
+  const endTime = performance.now();
+  const duration = ((endTime - startTime) / 1000).toFixed(2); // Convert ms to seconds
+  
+  console.log(`\n✨ Done in ${duration}s`); // Final success message
   return report;
 }
 
