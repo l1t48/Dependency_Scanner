@@ -1,11 +1,10 @@
 import { SCAN_MODE, SEVERITY_ORDER } from "../../config/scanner.config.js";
 import { getCacheStats } from "../cache/index.js";
 import { detectVulnerabilities } from "./detect.js";
-import { enrichAdvisories } from "./enrich.js";
+import { enrichBatch } from "./enrich.js"; // enrichAdvisories removed — no longer needed
 import { mapAdvisories } from "./mapper.js";
 
 export async function queryOSV({ uniqueDeps, invertedIndex }) {
-  // Filter by SCAN_MODE before touching cache or API
   const toScan =
     SCAN_MODE === "prod" ? uniqueDeps.filter((d) => !d.dev) : uniqueDeps;
 
@@ -19,22 +18,40 @@ export async function queryOSV({ uniqueDeps, invertedIndex }) {
   );
 
   // Pass 1 — detect which packages have advisories
-  const pending = await detectVulnerabilities(toScan);
+  const { pending, scanErrors } = await detectVulnerabilities(toScan);
 
-  if (!pending.length) {
+  if (scanErrors.length > 0) {
+    console.warn(
+      `\n[scanner] ⚠️  ${scanErrors.length} package(s) could not be verified — listed as Unknown\n`,
+    );
+  }
+
+  // Pass 2 — enrich the full pending list (cache hits are O(1) lookups, not API calls)
+  const fullAdvisories = await enrichBatch(pending);
+
+  if (!pending.length && !scanErrors.length) {
     console.log("\n[scanner] ✅ Scan complete — 0 vulnerabilities found");
     return [];
   }
 
-  // Pass 2 — fetch full advisory details (severity, summary, CVSS)
-  const fullAdvisories = await enrichAdvisories(pending);
-
-  // Map to VulnResult shape using full advisory data
   const vulnerabilities = [];
+
   for (const { dep, advisoryId } of pending) {
     const full = fullAdvisories.get(advisoryId);
-    if (!full) continue; // fetch failed — skip rather than emit "Unknown"
+    if (!full) continue;
     vulnerabilities.push(...mapAdvisories([full], dep, invertedIndex));
+  }
+
+  for (const dep of scanErrors) {
+    vulnerabilities.push({
+      package: dep.name,
+      version: dep.version,
+      severity: "Unknown",
+      advisory: "SCAN_ERROR",
+      summary: "Could not verify — OSV API unreachable after retries",
+      projects: invertedIndex[`${dep.name}@${dep.version}`] ?? [],
+      dev: dep.dev,
+    });
   }
 
   vulnerabilities.sort(

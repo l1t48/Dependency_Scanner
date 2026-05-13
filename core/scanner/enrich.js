@@ -1,49 +1,63 @@
+import { CONCURRENCY_LIMIT } from "../../config/scanner.config.js";
 import { readCacheBatch, writeCacheBatch } from "../cache/index.js";
 import { fetchFullAdvisory } from "./osv.js";
+import { createSemaphore } from "../utils/semaphore.js";
 
-export async function enrichAdvisories(pending) {
-  const uniqueIds = [...new Set(pending.map((p) => p.advisoryId))];
-  const advKeys = uniqueIds.map((id) => `adv_${id}`);
+const run = createSemaphore(CONCURRENCY_LIMIT);
+
+function unknownStub(id) {
+  return {
+    id,
+    summary: "Advisory details unavailable — API unreachable after retries",
+    severity: [],
+    database_specific: { severity: "UNKNOWN" },
+    _fetchFailed: true,
+  };
+}
+
+/**
+ * enrichBatch(pendingItems)
+ * Enrich a subset of pending items — called per-chunk during pipelining.
+ * Returns a Map<advisoryId, fullAdvisory> for only the IDs in this batch.
+ */
+export async function enrichBatch(pendingItems) {
+  const ids = [...new Set(pendingItems.map((p) => p.advisoryId))];
+  const advKeys = ids.map((id) => `adv_${id}`);
   const { hits, misses } = readCacheBatch(advKeys);
 
-  const fullAdvisories = new Map();
+  const result = new Map();
 
-  // ── Restore from cache — no API call ─────────────────────────────────────────
   for (const [key, full] of Object.entries(hits)) {
-    fullAdvisories.set(key.slice(4), full); // strip "adv_" prefix
+    result.set(key.slice(4), full);
   }
 
-  const hitCount = Object.keys(hits).length;
-  if (hitCount > 0) {
-    console.log(`[cache] ${hitCount} advisory detail(s) loaded — no API call`);
-  }
-
-  // ── Fetch missing advisories — API call ───────────────────────────────────────
   if (misses.length > 0) {
     const missingIds = misses.map((k) => k.slice(4));
-    console.log(
-      `[api]   Fetching ${missingIds.length} advisory detail(s) → GET /v1/vulns/{id}`,
+    const fetched = await Promise.all(
+      missingIds.map((id) => run(() => fetchFullAdvisory(id))),
     );
 
-    // Parallel fetch — OSV public API handles concurrent requests fine
-    const fetched = await Promise.all(missingIds.map(fetchFullAdvisory));
     const newEntries = {};
-
     for (let i = 0; i < missingIds.length; i++) {
-      const full = fetched[i];
-      if (full) {
-        fullAdvisories.set(missingIds[i], full);
-        newEntries[`adv_${missingIds[i]}`] = full;
-      }
+      const id = missingIds[i];
+      const full = fetched[i] ?? unknownStub(id);
+      result.set(id, full);
+      if (!full._fetchFailed) newEntries[`adv_${id}`] = full;
     }
 
     if (Object.keys(newEntries).length > 0) {
-      writeCacheBatch(newEntries);
-      console.log(
-        `[cache] ${Object.keys(newEntries).length} advisory detail(s) stored`,
-      );
+      await writeCacheBatch(newEntries);
     }
   }
 
-  return fullAdvisories;
+  return result;
+}
+
+/**
+ * enrichAdvisories(pending)
+ * Original interface — enriches the full pending list at once.
+ * Used when pipelining is not active (e.g. all results came from cache).
+ */
+export async function enrichAdvisories(pending) {
+  return enrichBatch(pending);
 }

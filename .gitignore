@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+scannerDocs.md
+notes.md
 
 # Cache — generated on every scan, machine-specific, can contain vuln details
 core/cache/cache.json

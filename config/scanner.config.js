@@ -1,12 +1,14 @@
 export const SEARCH_PATH = "E:/Projects";
-// "all"  → scan every dependency including dev tools
-// "prod" → scan only production dependencies
 export const SCAN_MODE = "prod";
-export const TTL_MS = 24 * 60 * 60 * 1000; //24 hours
+export const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const PRUNE_AFTER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — cache pruning
 export const OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch";
 export const OSV_VULN_URL = "https://api.osv.dev/v1/vulns";
 export const SEVERITIES = ["Critical", "High", "Moderate", "Low", "Unknown"];
 export const CHUNK_SIZE = 1000;
+export const CONCURRENCY_LIMIT = 15; // max simultaneous advisory fetches
+export const MAX_RETRIES = 3; // OSV 5xx retry ceiling
+export const RETRY_BASE_DELAY_MS = 500; // doubles each attempt: 500→1000→2000ms
 
 export const IGNORE_LIST = [
   "**/node_modules/**",

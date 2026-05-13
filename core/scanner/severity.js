@@ -18,9 +18,7 @@ export function mapSeverity(vuln) {
   }
 
   // Path 3 — CVSS vector string → numeric score → label
-  const cvssEntry = vuln.severity?.find(
-    (s) => s.type === "CVSS_V3" || s.type === "CVSS_V4" || s.type === "CVSS_V2",
-  );
+  const cvssEntry = vuln.severity?.find((s) => s.type === "CVSS_V3");
 
   if (cvssEntry?.score) {
     const score = parseCVSSVector(cvssEntry.score); // returns a NUMBER
