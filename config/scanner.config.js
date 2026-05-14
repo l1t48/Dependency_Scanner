@@ -9,6 +9,9 @@ export const CHUNK_SIZE = 1000;
 export const CONCURRENCY_LIMIT = 15; // max simultaneous advisory fetches
 export const MAX_RETRIES = 3; // OSV 5xx retry ceiling
 export const RETRY_BASE_DELAY_MS = 500; // doubles each attempt: 500→1000→2000ms
+// export const REPORT_TYPE = "cli";   // terminal only
+export const REPORT_TYPE = "email"; // writes email-preview.html, open in browser
+// export const REPORT_TYPE = "both";  // terminal + preview file
 
 export const IGNORE_LIST = [
   "**/node_modules/**",
