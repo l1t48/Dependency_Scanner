@@ -7,7 +7,6 @@
     "nodemon": "^3.1.14"
   },
   "scripts": {
-    "dev": "nodemon server.js",
     "core": "nodemon --ignore core/cache/ core/index.js scan",
     "extract:test": "node core/extractor/test.js"
   }
