@@ -11,29 +11,34 @@
  *
  *   Output selection is driven by REPORT_TYPE in scanner.config.js:
  *     "cli"   → terminal only
- *     "email" → SMTP only   (requires SMTP_* env vars)
- *     "html"  → file only   (writes report.html)
- *     "both"  → terminal + SMTP + file
+ *     "email" → PDF attachment via SMTP (requires SMTP_* env vars)
+ *     "html"  → writes report.html to project root
+ *     "both"  → terminal + HTML file + PDF email
+ *
+ *   Email output always sends a PDF generated from the same dark HTML
+ *   report. In "both" mode the HTML is rendered once and reused for
+ *   PDF generation — no redundant work.
  *
  * @note
- *   Mailer failures are caught and logged — they never crash the process
- *   or suppress other outputs. The HTML file write is similarly guarded.
- *   A failed email does not mean the scan result is lost.
+ *   Mailer and PDF failures are caught and logged — they never crash the
+ *   process or suppress the HTML file output. A failed email does not
+ *   mean the scan result is lost; report.html is always the source of
+ *   truth on disk.
  */
+
 import { scanProjects } from "./crawler/index.js";
 import { buildInventory } from "./extractor/index.js";
 import { queryOSV } from "./scanner/index.js";
 import { aggregate } from "./reporter/aggregate.js";
-import { printReport } from "./reporter/print.js";
-import { renderEmail } from "./reporter/email.js";
-import { renderHTML } from "./reporter/html/html.js";
-import { sendReport } from "./reporter/mailer.js";
+import { printReport } from "./reporter/cli/cli.js";
+import { renderHTML } from "./reporter/dashboard/dashboard.js";
+import { renderPDF } from "./reporter/mailer/pdf.js";
+import { sendReport } from "./reporter/mailer/mailer.js";
 import { writeFile } from "fs/promises";
 import { performance } from "perf_hooks";
 import path from "path";
 import { fileURLToPath } from "url";
 import { REPORT_TYPE, SCAN_MODE } from "../config/scanner.config.js";
-
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,22 +81,8 @@ export async function runScan() {
     printReport(report);
   }
 
-  // ── Output: email (SMTP) ──────────────────────────────────────────────────
-  let emailHtml = null;
-
-  if (REPORT_TYPE === "email" || REPORT_TYPE === "both") {
-    emailHtml = renderEmail(report);
-
-    try {
-      await sendReport(emailHtml, report);
-    } catch (err) {
-      // Never crash the run over a mailer failure — log and continue
-      console.error(`[mailer] ✗ Failed to send report: ${err.message}`);
-      console.error("         Check SMTP_* env vars and REPORT_TO.");
-    }
-  }
-
-  // ── Output: static HTML file ──────────────────────────────────────────────
+  // ── Output: HTML file ─────────────────────────────────────────────────────
+  // Rendered first so "both" mode can reuse it for PDF without a second render.
   let html = null;
 
   if (REPORT_TYPE === "html" || REPORT_TYPE === "both") {
@@ -106,12 +97,26 @@ export async function runScan() {
     }
   }
 
+  // ── Output: PDF email attachment ──────────────────────────────────────────
+  // Reuses the HTML rendered above in "both" mode (zero redundant work).
+  // Generates fresh HTML in "email" mode without writing it to disk.
+  if (REPORT_TYPE === "email" || REPORT_TYPE === "both") {
+    try {
+      console.log("\n[reporter] Generating PDF...");
+      const pdfBuffer = await renderPDF(report);
+      await sendReport(pdfBuffer, report);
+    } catch (err) {
+      console.error(`[mailer] ✗ Failed to send report: ${err.message}`);
+      console.error("         Check SMTP_* env vars and REPORT_TO.");
+    }
+  }
+
   console.log(`\n✨ Done in ${duration}s`);
 
-  return { report, html: html ?? emailHtml };
+  return { report, html };
 }
 
-// ─── CLI entry ─────────────────────────────────────────────────────────────────
+// ─── CLI entry ────────────────────────────────────────────────────────────────
 if (process.argv[2] === "scan") {
   runScan()
     .then(() => process.exit(0))

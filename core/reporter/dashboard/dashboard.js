@@ -1,7 +1,7 @@
 import { clientScript } from "./client.js";
 import { getStyles } from "./styles.js";
 import { getLayout } from "./layout.js";
-import { DARK_THEME } from "../themes/dark.js"; // one level up to reporter/, then themes/
+import { DARK_THEME } from "../themes/dark.js";
 
 /**
  * @module html

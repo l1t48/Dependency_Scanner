@@ -8,7 +8,7 @@
  *   by aggregate.js; this module is purely presentational.
  */
 
-import { SEVERITIES, SEVERITY_ICONS } from "../../config/scanner.config.js";
+import { SEVERITIES, SEVERITY_ICONS } from "../../../config/scanner.config.js";
 
 /**
  * printReport(report)
