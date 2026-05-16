@@ -11,6 +11,7 @@ email-preview.html
 
 # Cache — generated on every scan, machine-specific, can contain vuln details
 core/cache/cache.json
+report.html
 
 # Build output
 dist/

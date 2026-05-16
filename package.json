@@ -1,6 +1,8 @@
 {
   "dependencies": {
-    "fast-glob": "^3.3.3"
+    "dotenv": "^17.4.2",
+    "fast-glob": "^3.3.3",
+    "nodemailer": "^8.0.7"
   },
   "type": "module",
   "devDependencies": {
@@ -8,6 +10,6 @@
   },
   "scripts": {
     "core": "nodemon --ignore core/cache/ core/index.js scan",
-    "extract:test": "node core/extractor/test.js"
+    "extract:test": "node core/extractor/tests/extractor.test.js"
   }
 }

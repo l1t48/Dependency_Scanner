@@ -14,46 +14,18 @@
  *     Footer   — generated-by notice
  *
  * @note
- *   Returns a string. Sending is the responsibility of server/mailer.js.
+ *   Design tokens live in themes/light.js. If you add or rename a severity,
+ *   update both light.js and themes/dark.js so the two themes stay in sync.
+ *   Returns a string. Sending is the responsibility of mailer.js.
  *   This module has no I/O side effects.
  */
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const C = {
-  bgPage: "#f4f6f9",
-  bgCard: "#ffffff",
-  bgHeader: "#1a2942",
-  bgFooter: "#2c3e50",
-  textPrimary: "#1a2942",
-  textMuted: "#6b7a8d",
-  textLight: "#ffffff",
-  border: "#e2e8f0",
-  Critical: {
-    bg: "#fff5f5",
-    border: "#fc8181",
-    badge: "#e53e3e",
-    text: "#742a2a",
-  },
-  High: { bg: "#fffaf0", border: "#f6ad55", badge: "#dd6b20", text: "#7b341e" },
-  Moderate: {
-    bg: "#fffff0",
-    border: "#f6e05e",
-    badge: "#d69e2e",
-    text: "#744210",
-  },
-  Low: { bg: "#f0fff4", border: "#68d391", badge: "#38a169", text: "#1c4532" },
-  Unknown: {
-    bg: "#f7fafc",
-    border: "#a0aec0",
-    badge: "#718096",
-    text: "#2d3748",
-  },
-};
+import { LIGHT_THEME as C } from "./themes/light.js";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function summaryBadge(severity, icon, count) {
-  const { badge, text } = C[severity] ?? C.Unknown;
+  const { badge } = C[severity] ?? C.Unknown;
   return /* html */ `
     <td style="padding:8px;text-align:center;width:100px;">
       <div style="

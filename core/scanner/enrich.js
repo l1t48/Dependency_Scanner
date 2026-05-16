@@ -52,12 +52,3 @@ export async function enrichBatch(pendingItems) {
 
   return result;
 }
-
-/**
- * enrichAdvisories(pending)
- * Original interface — enriches the full pending list at once.
- * Used when pipelining is not active (e.g. all results came from cache).
- */
-export async function enrichAdvisories(pending) {
-  return enrichBatch(pending);
-}

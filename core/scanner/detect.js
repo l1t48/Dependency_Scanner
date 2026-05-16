@@ -1,6 +1,6 @@
 import { CHUNK_SIZE } from "../../config/scanner.config.js";
 import { readCacheBatch, writeCacheBatch } from "../cache/index.js";
-import { chunkArray } from "./chunk.js";
+import { chunkArray } from "../utils/chunk.js";
 import { fetchOSVBatch } from "./osv.js";
 
 /**
@@ -8,16 +8,20 @@ import { fetchOSVBatch } from "./osv.js";
  * @desc Pass 1 — batch vulnerability detection against OSV.
  *
  * @logic
- *   Chunks are dispatched concurrently rather than sequentially.
- *   Each resolved chunk immediately calls onChunkReady(pending, newEntries)
- *   so Pass 2 enrichment can begin on early results while later chunks
- *   are still in-flight — eliminating the hard wall between the two passes.
+ *   1. Resolve cache hits synchronously — no API call for known deps.
+ *   2. Split remaining (cache misses) into chunks of CHUNK_SIZE.
+ *   3. Dispatch all chunks concurrently via Promise.all.
+ *   4. Write new results to cache in one atomic flush.
+ *   5. Return the full `pending` list for Pass 2 (enrich).
  *
  * @note
- *   onChunkReady is optional. When omitted, behaviour is identical to the
- *   original sequential version (useful for testing in isolation).
+ *   Chunks run concurrently within Pass 1, but Pass 2 (enrichment) begins
+ *   only after detectVulnerabilities resolves. This keeps the two passes
+ *   explicit and easy to reason about. At the scale this tool targets
+ *   (personal / small-team project folders) the separation costs nothing
+ *   meaningful in wall-clock time, especially on warm cache runs.
  */
-export async function detectVulnerabilities(toScan, { onChunkReady } = {}) {
+export async function detectVulnerabilities(toScan) {
   const cacheKeys = toScan.map((d) => `osv_${d.name}@${d.version}`);
   const { hits, misses: missKeys } = readCacheBatch(cacheKeys);
 
@@ -28,7 +32,7 @@ export async function detectVulnerabilities(toScan, { onChunkReady } = {}) {
 
   // ── Resolve from cache ────────────────────────────────────────────────────
   for (const [key, advisories] of Object.entries(hits)) {
-    const dep = scanMap.get(key.slice(4));
+    const dep = scanMap.get(key.slice(4)); // strip "osv_" prefix
     if (dep) {
       for (const adv of advisories) pending.push({ dep, advisoryId: adv.id });
     }
@@ -57,7 +61,7 @@ export async function detectVulnerabilities(toScan, { onChunkReady } = {}) {
         let results;
         try {
           results = await fetchOSVBatch(chunk);
-        } catch (err) {
+        } catch {
           console.error(
             `[scanner] ⚠️  Batch ${i + 1} failed after retries — ` +
               `${chunk.length} package(s) could not be verified`,
@@ -68,28 +72,16 @@ export async function detectVulnerabilities(toScan, { onChunkReady } = {}) {
 
         if (!results) return;
 
-        // Build this chunk's pending list and cache entries
-        const chunkPending = [];
-        const chunkEntries = {};
-
         for (let j = 0; j < chunk.length; j++) {
           const dep = chunk[j];
           const advisories = results[j]?.vulns ?? [];
           const cacheKey = `osv_${dep.name}@${dep.version}`;
 
-          chunkEntries[cacheKey] = advisories;
           allNewEntries[cacheKey] = advisories;
 
           for (const adv of advisories) {
-            const item = { dep, advisoryId: adv.id };
-            chunkPending.push(item);
-            pending.push(item);
+            pending.push({ dep, advisoryId: adv.id });
           }
-        }
-
-        // ← Pass 2 can start on this chunk immediately
-        if (onChunkReady && chunkPending.length > 0) {
-          onChunkReady(chunkPending, chunkEntries);
         }
       }),
     );

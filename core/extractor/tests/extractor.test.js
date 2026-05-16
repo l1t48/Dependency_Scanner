@@ -1,4 +1,4 @@
-import { buildInventory } from "./index.js";
+import { buildInventory } from "../index.js";
 import { writeFileSync, unlinkSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
