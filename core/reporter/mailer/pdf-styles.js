@@ -1,5 +1,22 @@
+/**
+ * @module pdf-styles
+ * @desc Shared CSS-in-JS constants for PDF report generation.
+ * @logic
+ * Standard web CSS often fails or renders inconsistently in PDF engines.
+ * We solve this by:
+ * 1. Defining a global `@page` context for physical A4 dimensions.
+ * 2. Exporting pre-baked style strings (inline CSS) for table elements.
+ * 3. Using `table-layout: fixed` to ensure columns don't collapse or overflow.
+ * @note
+ * All colors are dynamically sourced from the `DARK_THEME` configuration to
+ * maintain brand alignment between the HTML dashboard and PDF exports.
+ */
 import { DARK_THEME as C } from "../themes/dark.js";
 
+/**
+ * @const STYLESHEET
+ * @desc Global CSS reset and page-level definitions.
+ */
 export const STYLESHEET = `
   /* CRITICAL: Defines the professional padding/margins for PDF */
   @page {

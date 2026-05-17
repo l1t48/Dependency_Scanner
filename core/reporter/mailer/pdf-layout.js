@@ -1,7 +1,29 @@
+/**
+ * @module pdf-reporter
+ * @desc Generates structured HTML fragments for PDF report generation.
+ * @logic
+ * 1. **Fixed Layouts**: Uses explicit percentage widths for table columns to prevent 
+ * layout shifting during the PDF print-stream conversion.
+ * 2. **Visual Hierarchy**: Groups vulnerabilities by severity, providing a clean 
+ * color-coded header for each section to help users prioritize remediation.
+ * 3. **Print Optimization**: Implements `page-break-inside: avoid` on section 
+ * wrappers to ensure a severity header isn't orphaned at the bottom of a page.
+ *
+ * @note
+ * This module uses shared styles (`TD`, `TH`, `TABLE`) from `pdf-styles.js` to 
+ * maintain a consistent design language across the multi-page document.
+ */
+
 import { DARK_THEME as C } from "../themes/dark.js";
 import { SEVERITY_ICONS } from "../../../config/scanner.config.js";
 import { TD, TH, TABLE } from "./pdf-styles.js";
 
+/**
+ * @function renderSummaryCards
+ * @desc Renders the top-level metric cards for the PDF front page.
+ * @param {Object} counts - Object containing counts for each severity level.
+ * @returns {string} HTML string containing flex-based summary boxes.
+ */
 export function renderSummaryCards(counts) {
   return ["Critical", "High", "Moderate", "Low"]
     .map((sev) => {
@@ -20,6 +42,15 @@ export function renderSummaryCards(counts) {
     .join("");
 }
 
+/**
+ * @function renderSeveritySections
+ * @desc Iterates through vulnerability groups to create categorized tables.
+ * @logic 
+ * Maps over the `groups` array, creating a new table for each severity level.
+ * Includes zebra-striping for rows to improve readability in dense data sets.
+ * @param {Array<Object>} groups - Array of objects containing severity, count, and items.
+ * @returns {string} HTML string containing the full list of vulnerability tables.
+ */
 export function renderSeveritySections(groups) {
   return groups
     .map(({ severity, count, items }) => {

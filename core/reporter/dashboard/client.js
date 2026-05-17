@@ -1,3 +1,18 @@
+/**
+ * @module dashboard-assets
+ * @desc Standalone client-side assets injected into the final HTML report.
+ *
+ * @logic
+ * To ensure the generated HTML report is a single, portable file (ideal for
+ * email attachments or CI/CD artifacts), we avoid external dependencies.
+ * The `clientScript` provides vanilla JS interactivity (sorting, filtering),
+ * while `getStyles` generates CSS dynamically based on an injected color palette.
+ *
+ * @note
+ * The client script relies on a global `DATA` object. The HTML rendering engine
+ * is responsible for serializing the scan results and injecting `const DATA = {...}`
+ * directly above this script in the final document.
+ */
 export const clientScript = `
 // ─── Data ─────────────────────────────────────────────────────────────────────
 // DATA is injected dynamically before this script runs.

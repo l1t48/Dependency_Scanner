@@ -1,5 +1,30 @@
+/**
+ * @module severity-calculator
+ * @desc Normalizes disparate security ratings into a unified severity scale.
+ *
+ * @logic
+ * This module uses a hierarchical resolution strategy to determine severity:
+ * 1. **Ecosystem Labels**: Checks for pre-calculated labels from the database.
+ * 2. **CVSS Vector Parsing**: If labels are missing, it implements the official 
+ * CVSS 3.1 Base Score formula to calculate a score from the vector string.
+ * 3. **Numeric mapping**: Maps the final 0.0–10.0 score back to standard 
+ * Critical/High/Moderate/Low labels.
+ *
+ * @note
+ * Vector parsing uses "Roundup" logic (ceiling to 1 decimal place) to ensure 
+ * we align with the official CVSS specification.
+ */
 import { SEVERITY_MAP } from "../../config/scanner.config.js";
 
+/**
+ * @function mapSeverity
+ * @desc The entry point for converting raw vulnerability data to a label.
+ * @logic 
+ * Implements a 3-path fallback: 
+ * Path 1: Root-level label.
+ * Path 2: Package-specific label within the 'affected' array.
+ * Path 3: Mathematical calculation from CVSS_V3 vectors.
+ */
 export function mapSeverity(vuln) {
   // Path 1 — root-level GitHub Advisory label (most common for npm packages)
   const rootLabel = vuln.database_specific?.severity;
@@ -28,10 +53,16 @@ export function mapSeverity(vuln) {
   return "Unknown";
 }
 
-// ─── CVSS 3.x base score calculation ─────────────────────────────────────────
-// Formula from the official CVSS 3.1 specification.
-// parseCVSSVector returns a number 0.0–10.0, NOT an object.
-
+/**
+ * @function parseCVSSVector
+ * @desc Mathematical implementation of the CVSS 3.1 Base Score.
+ * @logic 
+ * Deconstructs the vector string into its metric components (AV, AC, PR, etc.).
+ * It calculates the Impact Sub Score (ISC) and Exploitability Sub Score (ESC) 
+ * to arrive at the base score, accounting for Scope (S) changes.
+ * @param {string} vector - e.g., "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+ * @returns {number} Score between 0.0 and 10.0.
+ */
 function parseCVSSVector(vector) {
   const parts = {};
   for (const seg of vector.split("/").slice(1)) {
@@ -74,6 +105,10 @@ function parseCVSSVector(vector) {
   return Math.ceil(raw * 10) / 10; // CVSS "Roundup" — ceiling to 1 decimal place
 }
 
+/**
+ * @function scoreToLabel
+ * @desc Converts a numeric CVSS score to a qualitative severity rating.
+ */
 function scoreToLabel(score) {
   if (score >= 9.0) return "Critical";
   if (score >= 7.0) return "High";

@@ -43,10 +43,14 @@ import { REPORT_TYPE, SCAN_MODE } from "../config/scanner.config.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * runScan()
- *
- * Full pipeline. Returns { report, html } where html is null
- * when REPORT_TYPE is "cli".
+ * @function runScan
+ * @desc Executes the full multi-phase scanning pipeline.
+ * @logic
+ * 1. Tracks performance via `perf_hooks`.
+ * 2. Chains the Crawler -> Extractor -> Scanner modules.
+ * 3. Aggregates results: filters dev-dependencies if SCAN_MODE is 'prod'.
+ * 4. Dispatches results to selected output drivers (CLI, HTML, and/or Mailer).
+ * @returns {Promise<Object>} Object containing the raw report data and rendered HTML string.
  */
 export async function runScan() {
   console.log("═══════════════════════════════════════");
@@ -116,7 +120,11 @@ export async function runScan() {
   return { report, html };
 }
 
-// ─── CLI entry ────────────────────────────────────────────────────────────────
+/**
+ * @logic
+ * Checks process arguments for the 'scan' command.
+ * Provides a clean exit code (0 for success, 1 for fatal errors).
+ */
 if (process.argv[2] === "scan") {
   runScan()
     .then(() => process.exit(0))

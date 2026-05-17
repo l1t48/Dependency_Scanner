@@ -1,3 +1,13 @@
+/**
+ * @function getStyles
+ * @desc Generates the CSS payload for the HTML dashboard.
+ * @logic
+ * Uses a configuration object `C` to map color values to CSS Custom Properties 
+ * (variables) on the `:root` element. This centralizes styling and ensures 
+ * colors remain consistent across cards, badges, and text.
+ * @param {Object} C - Theme configuration object containing hex codes/rgba values.
+ * @returns {string} Raw CSS string to be injected into a <style> tag.
+ */
 export const getStyles = (C) => `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

@@ -1,3 +1,25 @@
+/**
+ * @module email-templates
+ * @desc Generates multi-format email content (HTML & Plain Text) for scan notifications.
+ *
+ * @logic
+ * 1. **Inline Styling**: Uses absolute CSS values and table-based layouts to ensure
+ * maximum compatibility across legacy email clients.
+ * 2. **Conditional UI**: Dynamically switches the "Status Pill" (Red/Green) and
+ * pluralizes terminology based on the vulnerability count.
+ * 3. **Severity Mapping**: Iterates through the `SEV` configuration to build
+ * the "Severity Breakdown" grid with high visual hierarchy.
+ *
+ * @note
+ * This serves as the "at-a-glance" summary. It does not include the full list
+ * of vulnerabilities to keep the email weight low; the detailed data is
+ * deferred to the PDF attachment.
+ */
+
+/**
+ * @const SEV
+ * @desc UI configuration for severity levels within the email body.
+ */
 export const SEV = {
   Critical: { bg: "#fff5f5", border: "#fc8181", text: "#742a2a", icon: "🔴" },
   High: { bg: "#fffaf0", border: "#f6ad55", text: "#7b341e", icon: "🟠" },
@@ -5,6 +27,15 @@ export const SEV = {
   Low: { bg: "#f0fff4", border: "#68d391", text: "#1c4532", icon: "🟢" },
 };
 
+/**
+ * @function buildEmailBody
+ * @desc Constructs the responsive HTML email sent to stakeholders.
+ * @param {Object} params
+ * @param {string} params.scannedAt - ISO timestamp of the scan.
+ * @param {Object} params.meta - Summary metadata (project count, dep count).
+ * @param {Object} params.counts - Key-value pair of severity levels to their counts.
+ * @returns {string} Fully rendered HTML document.
+ */
 export function buildEmailBody({ scannedAt, meta, counts }) {
   const hasVulns = meta.totalVulnerabilities > 0;
 
@@ -99,6 +130,11 @@ export function buildEmailBody({ scannedAt, meta, counts }) {
 </html>`;
 }
 
+/**
+ * @function buildPlainText
+ * @desc Generates a text-only version of the report for clients that disable HTML.
+ * @returns {string} Formatted ASCII-style summary.
+ */
 export function buildPlainText({ meta, counts, scannedAt }) {
   return [
     "dep-scanner — Dependency Vulnerability Report",

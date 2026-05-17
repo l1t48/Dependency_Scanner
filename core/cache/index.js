@@ -23,12 +23,24 @@ import { TTL_MS, PRUNE_AFTER_MS } from "../../config/scanner.config.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_FILE = path.join(__dirname, "cache.json");
 const CACHE_TMP = `${CACHE_FILE}.tmp`;
-let _flushChain = Promise.resolve();
 
+/**
+ * @private
+ * @desc Queue for write operations.
+ * @logic 
+ * Prevents race conditions where multiple async flushes might attempt 
+ * to write to the .tmp file simultaneously.
+ */
+let _flushChain = Promise.resolve();
 let _cache = null;
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
-
+/**
+ * @private
+ * @desc Lazy-loader for the cache object.
+ * @logic 
+ * Uses sync I/O on the first call to block execution until the state 
+ * is ready, then caches the object in memory for the rest of the process.
+ */
 function load() {
   if (_cache !== null) return _cache;
   if (!existsSync(CACHE_FILE)) return (_cache = {});
@@ -42,8 +54,12 @@ function load() {
 }
 
 /**
- * Atomic flush: write to .tmp first, then rename into place.
- * If the process is killed mid-write the original file is untouched.
+ * @private
+ * @desc Atomic filesystem sync.
+ * @logic 
+ * Queues the write operation at the end of the current _flushChain. 
+ * Writes to a temporary file before renaming it over the original, 
+ * ensuring the primary cache file is never corrupted by partial writes.
  */
 async function flush() {
   _flushChain = _flushChain.then(async () => {
@@ -58,11 +74,12 @@ async function flush() {
   return _flushChain;
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
 /**
- * readCacheBatch(keys)
- * Returns hits (valid, within TTL) and misses (absent or expired).
+ * @function readCacheBatch
+ * @desc Retrieves valid entries and identifies misses for a set of keys.
+ * @logic 
+ * Iterates through keys and compares 'cachedAt' timestamps against TTL_MS. 
+ * If an entry is expired or missing, it is flagged as a miss for fresh fetching.
  */
 export function readCacheBatch(keys) {
   const cache = load();
@@ -83,8 +100,11 @@ export function readCacheBatch(keys) {
 }
 
 /**
- * writeCacheBatch(entries)
- * Writes all entries in one pass then flushes once atomically.
+ * @function writeCacheBatch
+ * @desc Updates the memory store and flushes to disk.
+ * @logic 
+ * Updates the global _cache object with new timestamps and values before 
+ * triggering a background flush.
  */
 export async function writeCacheBatch(entries) {
   const cache = load();
@@ -98,8 +118,11 @@ export async function writeCacheBatch(entries) {
 }
 
 /**
- * getCacheStats()
- * Returns { total, valid, expired } — used by scanner for pre-scan logging.
+ * @function getCacheStats
+ * @desc Provides health metrics for the cache.
+ * @logic 
+ * Performs a shallow scan of the cache object to calculate valid vs expired 
+ * ratios based on current TTL.
  */
 export function getCacheStats() {
   const cache = load();
@@ -110,9 +133,12 @@ export function getCacheStats() {
 }
 
 /**
- * clearCache()
- * Prunes entries older than PRUNE_AFTER_MS, then flushes.
- * Use `force: true` to wipe everything regardless of age.
+ * @function clearCache
+ * @desc Maintenance routine for pruning or wiping data.
+ * @logic 
+ * Selective pruning uses PRUNE_AFTER_MS to remove "stale" entries that are 
+ * no longer likely to be useful, preventing the JSON file from growing 
+ * indefinitely. Force mode ignores logic and resets the object.
  */
 export async function clearCache({ force = false } = {}) {
   const cache = load();

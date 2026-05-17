@@ -23,8 +23,15 @@ import {
 } from "../../config/scanner.config.js";
 import { withRetry } from "../utils/retry.js";
 
-// ─── Batch detection ──────────────────────────────────────────────────────────
-
+/**
+ * @function fetchOSVBatch
+ * @desc Queries the OSV database for a chunk of dependencies.
+ * @logic 
+ * Transforms a dependency chunk into the specific OSV "queries" JSON format. 
+ * It uses the `withRetry` utility to manage network stability.
+ * @param {Array} chunk - Array of {name, version} objects.
+ * @returns {Promise<Array|null>} Array of results or null on 4xx error.
+ */
 export async function fetchOSVBatch(chunk) {
   const body = {
     queries: chunk.map((dep) => ({
@@ -78,8 +85,15 @@ export async function fetchOSVBatch(chunk) {
   );
 }
 
-// ─── Advisory enrichment ──────────────────────────────────────────────────────
-
+/**
+ * @function fetchFullAdvisory
+ * @desc Retrieves the complete JSON record for a specific vulnerability ID.
+ * @logic 
+ * Performs a simple GET request to the vulnerability endpoint. Like the batch 
+ * call, it only retries on server-side (5xx) faults.
+ * @param {string} id - The OSV/GHSA/CVE identifier.
+ * @returns {Promise<object|null>} Full advisory JSON or null on failure.
+ */
 export async function fetchFullAdvisory(id) {
   try {
     return await withRetry(
