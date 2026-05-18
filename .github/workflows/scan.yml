@@ -26,7 +26,7 @@ name: Dependency Vulnerability Scan
 
 on:
   schedule:
-    - cron: "0 9 * * 1" # Every Monday at 09:00 UTC
+    - cron: "8 21 * * 1" # Every Monday at 09:00 UTC
 
   # Manual trigger — "Run workflow" button in the GitHub Actions UI.
   # Requires GitHub authentication; does not expose a public API endpoint.
