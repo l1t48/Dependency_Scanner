@@ -15,15 +15,17 @@
  *     "html"  → writes report.html to project root
  *     "both"  → terminal + HTML file + PDF email
  *
- *   Email output always sends a PDF generated from the same dark HTML
- *   report. In "both" mode the HTML is rendered once and reused for
- *   PDF generation — no redundant work.
- *
  * @note
  *   Mailer and PDF failures are caught and logged — they never crash the
- *   process or suppress the HTML file output. A failed email does not
- *   mean the scan result is lost; report.html is always the source of
- *   truth on disk.
+ *   process or suppress the HTML file output.
+ *
+ * @exit_codes
+ *   0 — scan complete, no Critical or High vulnerabilities found
+ *   1 — Critical or High vulnerabilities found (CI workflow turns red)
+ *   1 — unrecoverable pipeline error
+ *
+ *   All outputs (HTML file, email, CLI log) are written BEFORE the process
+ *   exits, so a non-zero exit never means a lost report.
  */
 
 import { scanProjects } from "./crawler/index.js";
@@ -43,14 +45,10 @@ import { REPORT_TYPE, SCAN_MODE } from "../config/scanner.config.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * @function runScan
- * @desc Executes the full multi-phase scanning pipeline.
- * @logic
- * 1. Tracks performance via `perf_hooks`.
- * 2. Chains the Crawler -> Extractor -> Scanner modules.
- * 3. Aggregates results: filters dev-dependencies if SCAN_MODE is 'prod'.
- * 4. Dispatches results to selected output drivers (CLI, HTML, and/or Mailer).
- * @returns {Promise<Object>} Object containing the raw report data and rendered HTML string.
+ * runScan()
+ *
+ * Full pipeline. Returns { report, html } where html is null
+ * when REPORT_TYPE is "cli".
  */
 export async function runScan() {
   console.log("═══════════════════════════════════════");
@@ -86,7 +84,6 @@ export async function runScan() {
   }
 
   // ── Output: HTML file ─────────────────────────────────────────────────────
-  // Rendered first so "both" mode can reuse it for PDF without a second render.
   let html = null;
 
   if (REPORT_TYPE === "html" || REPORT_TYPE === "both") {
@@ -102,8 +99,6 @@ export async function runScan() {
   }
 
   // ── Output: PDF email attachment ──────────────────────────────────────────
-  // Reuses the HTML rendered above in "both" mode (zero redundant work).
-  // Generates fresh HTML in "email" mode without writing it to disk.
   if (REPORT_TYPE === "email" || REPORT_TYPE === "both") {
     try {
       console.log("\n[reporter] Generating PDF...");
@@ -120,14 +115,37 @@ export async function runScan() {
   return { report, html };
 }
 
-/**
- * @logic
- * Checks process arguments for the 'scan' command.
- * Provides a clean exit code (0 for success, 1 for fatal errors).
- */
+// ─── CLI entry ────────────────────────────────────────────────────────────────
+// Exit codes are only meaningful when running as a CLI command (node core/index.js scan).
+// When imported as a module (e.g. in tests), runScan() resolves normally.
+//
+// Threshold: Critical or High vulnerabilities trigger exit 1.
+// Rationale: Moderate/Low vulns are informational — they warrant review but
+// should not block CI. Critical/High are active risks that need immediate action.
+//
+// All outputs are written inside runScan() before this block runs,
+// so the non-zero exit never causes a lost report or email.
+
 if (process.argv[2] === "scan") {
   runScan()
-    .then(() => process.exit(0))
+    .then(({ report }) => {
+      const critical = report.counts.Critical ?? 0;
+      const high = report.counts.High ?? 0;
+      const blocking = critical + high;
+
+      if (blocking > 0) {
+        console.log(
+          `\n[scanner] ⛔ Exiting with code 1 — ` +
+            `${critical} Critical / ${high} High vulnerabilities found.`,
+        );
+        console.log(
+          "          Review the report and update affected dependencies.",
+        );
+        process.exit(1);
+      }
+
+      process.exit(0);
+    })
     .catch((err) => {
       console.error("[core] Fatal error:", err.message);
       process.exit(1);

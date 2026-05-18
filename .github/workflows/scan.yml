@@ -1,0 +1,135 @@
+# dep-scanner — automated vulnerability scan
+#
+# Triggers:
+#   Scheduled : every Monday at 09:00 UTC
+#   Manual    : "Run workflow" button in the GitHub Actions UI
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   SMTP_HOST   — SMTP server hostname     e.g. smtp.gmail.com
+#   SMTP_PORT   — SMTP port                587 = STARTTLS · 465 = TLS
+#   SMTP_SECURE — "true" for port 465, leave empty for 587
+#   SMTP_USER   — sender email address
+#   SMTP_PASS   — app password / SMTP password
+#   REPORT_TO   — recipient address(es), comma-separated
+#
+# Exit codes (set by core/index.js):
+#   0 — scan complete, no Critical or High vulnerabilities found
+#   1 — Critical or High vulnerabilities found  ← workflow turns RED
+#   1 — fatal pipeline error (unrecoverable crawler/OSV failure)
+#
+# Outputs per run:
+#   → CLI summary printed to the Actions log
+#   → PDF report emailed to REPORT_TO
+#   → report.html uploaded as a build artifact (retained 30 days)
+
+name: Dependency Vulnerability Scan
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday at 09:00 UTC
+
+  # Manual trigger — "Run workflow" button in the GitHub Actions UI.
+  # Requires GitHub authentication; does not expose a public API endpoint.
+  workflow_dispatch:
+
+# Prevent two scans running at the same time.
+# cancel-in-progress: false — a queued run waits rather than being dropped,
+# so no scan result is ever silently lost.
+concurrency:
+  group: dep-scanner
+  cancel-in-progress: false
+
+# Minimal permissions — this workflow only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Run dep-scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js ───────────────────────────────────────────────────────────
+      # cache: "npm" caches ~/.npm (the npm download cache) to speed up
+      # npm ci package resolution. This does NOT cache Puppeteer's Chromium
+      # binary — that requires the dedicated cache step below.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # ── 3. Puppeteer / Chromium cache ─────────────────────────────────────────
+      # Puppeteer downloads Chromium (~170 MB) as an npm postinstall script.
+      # Caching ~/.cache/puppeteer means every run after the first skips the
+      # download, saving ~60 seconds per run.
+      #
+      # Cache key uses **/package-lock.json (glob) so it also catches lockfiles
+      # in nested workspaces if the repo structure ever grows.
+      # restore-keys provides a fallback so a non-Puppeteer dep update doesn't
+      # force a full re-download — Puppeteer will reuse the existing binary if
+      # the version hasn't changed.
+      - name: Cache Puppeteer Chromium
+        id: puppeteer-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
+      # ── 4. Install dependencies ───────────────────────────────────────────────
+      # PUPPETEER_CACHE_DIR is set explicitly so Puppeteer's postinstall script
+      # installs Chromium into the exact directory being cached above.
+      # Without this, Puppeteer may resolve a different default path on the
+      # runner, making the cache step above produce a hit but deliver nothing.
+      - name: Install dependencies
+        env:
+          PUPPETEER_CACHE_DIR: /home/runner/.cache/puppeteer
+        run: npm ci
+
+      # ── 5. Run vulnerability scan ─────────────────────────────────────────────
+      # SEARCH_PATH  → scan the checked-out workspace (dep-scanner's own deps).
+      # REPORT_TYPE  → "both": CLI log + PDF email + report.html on disk.
+      # SCAN_MODE    → "all": prod and dev dependencies.
+      #
+      # PUPPETEER_CACHE_DIR must match step 4 so the runtime process finds
+      # the same Chromium binary that was installed during npm ci.
+      #
+      # Exit behaviour (enforced by core/index.js CLI entry):
+      #   0 — no Critical/High vulns found (workflow stays green)
+      #   1 — Critical/High vulns found    (workflow turns red → visible alert)
+      #   1 — unrecoverable pipeline error
+      - name: Run vulnerability scan
+        env:
+          PUPPETEER_CACHE_DIR: /home/runner/.cache/puppeteer
+          SEARCH_PATH: ${{ github.workspace }}
+          REPORT_TYPE: both
+          SCAN_MODE: all
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+        run: node core/index.js scan
+
+      # ── 6. Upload HTML report as build artifact ───────────────────────────────
+      # success() || failure() — upload when the scan finishes (green or red),
+      # but NOT when the job is cancelled mid-run (timeout or manual cancel),
+      # since an incomplete scan produces no meaningful report.html.
+      #
+      # Download: Actions run page → Summary → Artifacts → vulnerability-report-*.
+      - name: Upload HTML report
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-report-${{ github.run_id }}
+          path: report.html
+          retention-days: 30
+          if-no-files-found: warn
