@@ -5,7 +5,7 @@ import "dotenv/config";
 // so GitHub Actions (or any CI) can inject values without touching this file.
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
-export const SEARCH_PATH = process.env.SEARCH_PATH ?? "E:/Projects";
+export const SEARCH_PATH = process.env.SEARCH_PATH;
 
 // ─── Scan behaviour ───────────────────────────────────────────────────────────
 export const SCAN_MODE = process.env.SCAN_MODE ?? "prod"; // "prod" | "all"
