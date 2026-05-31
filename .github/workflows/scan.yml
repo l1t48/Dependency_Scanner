@@ -83,6 +83,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-puppeteer-
 
+      # ── 3.5 Restore Scanner API Cache ────────────────────────────────────────
+      # Downloads cache.json from a previous run if available.
+      # The key includes run_id to ensure a unique snapshot is saved later,
+      # while restore-keys allows us to "warm up" from the most recent
+      # successful or failed scan.
+      - name: Restore vulnerability scan cache
+        uses: actions/cache@v4
+        with:
+          path: core/cache/cache.json
+          key: dep-scanner-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            dep-scanner-cache-${{ runner.os }}-
+
       # ── 4. Install dependencies ───────────────────────────────────────────────
       # PUPPETEER_CACHE_DIR is set explicitly so Puppeteer's postinstall script
       # installs Chromium into the exact directory being cached above.
@@ -133,3 +146,15 @@ jobs:
           path: report.html
           retention-days: 30
           if-no-files-found: warn
+          
+      # ── 7. Save Scanner API Cache ────────────────────────────────────────────
+      # Persists the updated cache.json back to GitHub's storage.
+      # if: success() || failure() is critical: it ensures that even if the
+      # scan "fails" (finds vulnerabilities), the API data we just fetched
+      # is saved so the next run doesn't have to fetch it again.
+      - name: Save vulnerability scan cache
+        if: success() || failure()
+        uses: actions/cache/save@v4
+        with:
+          path: core/cache/cache.json
+          key: dep-scanner-cache-${{ runner.os }}-${{ github.run_id }}
